@@ -1,0 +1,155 @@
+---
+title: "First approach to service availability"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 2
+---
+
+This notebook is a first exploration of how SNIS and RBF data collected in DRC through dedicated DHIS2 portals can be used to measure availability of vaccination services. For each of these portals, all available metadata has been extracted using the package DHISExtractr. For the SNIS portal, the following elements have also been extracted:
+
+* The list of indicators mentioning the initials "BCG"
+* The list of facilities supposed to be reporting on at least one of these indicators. 
+* All available data for these indicators in these facilities for the years 2016-2017. Looking at the data, it turns out there has been a structural change in the level of data availability in 2017, and we thus dropped the (very) few available 2016 data.
+
+For legibility of this notebook, all _housekeeping_ code has been muted.
+
+```{r echo=FALSE , message=FALSE , warning=FALSE , error=FALSE}
+library(dplyr)
+library(ggplot2)
+library(dhisextractr)
+library(rgdal)
+
+load_env('../../.env')
+
+setwd(work_dir)
+
+data_elements <- read.csv(paste0(snis_data_dir, '/data_elements_metadata.csv'))
+org_units_reports <- read.csv(paste0(snis_data_dir, '/org_units_report.csv'))
+data_elements_sets <- read.csv(paste0(snis_data_dir, '/data_elements_sets.csv'))
+
+data_elements_pdss <- read.csv(paste0(pdss_data_dir, '/data_elements_metadata.csv'))
+org_units_reports_pdss <- read.csv(paste0(pdss_data_dir, '/org_units_report.csv'))
+data_elements_sets_pdss <- read.csv(paste0(pdss_data_dir, '/data_elements_sets.csv'))
+
+data_elements_bcg <- look_up_data_element_term('bcg')
+data_sets_bcg <- look_up_data_set_term('bcg')
+org_units_bcg <- get_de_reporting_facilities(data_sets_bcg)
+
+data_pdss_full <- read.csv('data/raw/pdss_data.csv')
+data_snis_full <- read.csv('data/raw/bcg_data.csv')
+fac_zones <- read.csv('data/references/snis_fosas_zones.csv')
+fac_zones_pdss <- read.csv('data/references/pdss_fosas_zones.csv')
+
+matched_zones <- read.csv('data/references/matched_zones.csv')
+
+
+data <- data_snis_full[data_snis_full$period > "201612", ]
+data <- merge(data, fac_zones, by.x = 'org_unit_ID', by.y = 'units')
+
+data_pdss <- data_pdss_full[as.character(data_pdss_full$period) > "2016Q4", ]
+data_pdss <- merge(data_pdss, fac_zones_pdss, by.x = 'org_unit_ID', by.y = 'units')
+data_pdss <- merge(data_pdss, data_elements_pdss, by.x = 'data_element_ID' , by.y = 'id')
+
+
+org_units_bcg <- fac_zones[fac_zones$units %in% org_units_bcg,]
+
+shapefile_data <- readOGR(paste0(snis_data_dir, '/map_polygons.shp'))
+coordinates <- fortify(shapefile_data, region="org_unit_I")
+colnames(coordinates) <- c('long','lat','order','hole','piece','zone','group')
+coordinates <- coordinates[coordinates$zone %in% fac_zones$zone,]
+```
+
+
+## Data Completeness
+
+We first want to look at the completeness of the data in the SNIS DHIS reporting. To do this by zone, we consider each facility in a given zone should have reported 12 times in the year 2017. 
+
+```{r message=FALSE, warning=FALSE}
+fosa_by_zone <- group_by(org_units_bcg, zone)
+n_expected <- summarise(fosa_by_zone, n_expected = length(unique(as.character(units))))
+
+map_expectation <- right_join(coordinates , n_expected, by = 'zone')
+
+summary(n_expected$n_expected)
+
+ggplot(map_expectation)+
+  geom_polygon(aes(x  = long, y = lat , 
+                   group=zone, 
+                   fill = n_expected)) +
+  theme_minimal() +
+  coord_map()+ 
+  scale_fill_distiller(name = "Expected Reports",
+                       palette = "Spectral" , direction = -1)+ 
+  theme(legend.position = "bottom")
+```
+
+We can now compare this data to the number of reports actually obtained by zone on each of the target indicators.
+
+```{r message=FALSE, warning=FALSE}
+data_by_zone_period <- group_by(data, zone , period)
+n_reporting_period <- summarise(data_by_zone_period, n_reporting_monthly = length(unique(as.character(org_unit_ID))))
+
+n_reporting_zone <- group_by(n_reporting_period, zone)
+n_reporting_zone <- summarise(n_reporting_zone, n_reporting = sum(n_reporting_monthly))
+
+n_reporting <- inner_join(n_reporting_zone , n_expected)
+n_reporting$reporting_rate <- n_reporting$n_reporting / (12 * n_reporting$n_expected)
+
+map_reporting_rates <- right_join(coordinates , n_reporting, by = 'zone')
+ggplot(map_reporting_rates)+
+  geom_polygon(aes(x  = long, y = lat , 
+                   group=zone, 
+                   fill = reporting_rate)) +
+  theme_minimal() +
+  coord_map()+ 
+  scale_fill_distiller(name = "Reporting Rates",
+                       palette = "Spectral" , direction = 1)+ 
+  theme(legend.position = "bottom")
+```
+
+## BCG stockouts description
+
+### Based on reported stockouts
+
+First, let's look at the reported stockouts.
+
+```{r , warning=FALSE}
+data_rupture <- data[(data$name == 'B 6.1 BCG diluants - jours de rupture de stock' | 
+                        data$name == 'F 4.1 BCG diluants - Jours de rupture de stock') & 
+                            data$value < 32 ,]
+
+stockout_by_zone <- group_by(data_rupture , zone)
+mean_reported_stockout <- summarize(stockout_by_zone, mean_rupture = mean(value))
+
+map_reported_stockout <- right_join(coordinates , mean_reported_stockout, by = 'zone')
+ggplot(map_reported_stockout)+
+  geom_polygon(aes(x  = long, y = lat , 
+                   group=zone, 
+                   fill = mean_rupture)) +
+  theme_minimal() +
+  coord_map()+ 
+  scale_fill_distiller(name = "Mean reported stockout days",
+                       palette = "Spectral" , direction = -1)+ 
+  theme(legend.position = "bottom")
+```
+
+## PDSS data
+
+```{r}
+pdss_bcg <- data_pdss[as.character(data_pdss$name) %in% c('13.5.1 BCG, Penta, la poliomyélite, la fièvre jaune, hépatite B, la rougeole, le tétanos', '13.5.1 BCG'), ]
+
+#'13.5.1 BCG',
+
+pdss_bcg$stockout <- pdss_bcg$value == 0
+pdss_bcg <- merge(pdss_bcg , matched_zones, by.x = 'zone' , by.y = 'id_pdss')
+pdss_bcg$id_snis <- as.character(pdss_bcg$id_snis)
+
+
+pdss_bcg_zone <- group_by(pdss_bcg , id_snis)
+pdss_bcg_stockout <- summarise(pdss_bcg_zone, mean_stockout = mean(stockout))
+
+pdss_snis_compare <- merge(pdss_bcg_stockout, mean_reported_stockout, by.x = 'id_snis', by.y = 'zone')
+plot(pdss_snis_compare$mean_stockout , pdss_snis_compare$mean_rupture)
+
+```
