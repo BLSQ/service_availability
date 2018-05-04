@@ -10,11 +10,11 @@ org_units_reports <- read.csv(paste0(snis_data_dir, '/org_units_report.csv'))
 data_elements_sets <- read.csv(paste0(snis_data_dir, '/data_elements_sets.csv'))
 org_units_metadata <- read.csv(paste0(snis_data_dir, '/org_units_description.csv'))
 
-data_elements_bcg <- look_up_data_element_term('bcg')
-data_sets_bcg <- look_up_data_set_term('bcg')
+data_elements_bcg <- look_up_data_element_term('DTC-HepB-Hib')
+data_sets_bcg <- look_up_data_set_term('DTC-HepB-Hib')
 org_units_bcg <- get_de_reporting_facilities(data_sets_bcg)
 
-data <- extract_all_data(snis_url, data_elements_bcg, org_units_bcg, '201601', '201712', 
+data <- extract_all_data(snis_url, data_elements_bcg, org_units_bcg, c('201612', '201712'), 
                          snis_login, snis_password, 
                          type_extract = 'de', pace = 100)
 
@@ -22,7 +22,8 @@ data_full <- merge(data, data_elements, by.x = 'data_element_ID', by.y =  'id', 
 data_full$name <- as.character(data_full$name)
 data_full$value <- as.numeric(as.character(data_full$value))
 
-write.csv(data_full, '/data/raw/snis_bcg_data.csv')
+#write.csv(data_full, '/data/raw/snis_bcg_data.csv')
+write.csv(data_full, 'data/raw/snis_penta_data.csv')
 
 
 ### Aggregating Fosa at facility level for future reference
