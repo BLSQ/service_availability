@@ -19,6 +19,10 @@ library(dplyr)
 library(ggplot2)
 library(dhisextractr)
 library(rgdal)
+library(pals)
+library(classInt)
+library(latticeExtra)
+library(grid)
 
 load_env('../../.env')
 
@@ -32,12 +36,12 @@ data_elements_pdss <- read.csv(paste0(pdss_data_dir, '/data_elements_metadata.cs
 org_units_reports_pdss <- read.csv(paste0(pdss_data_dir, '/org_units_report.csv'))
 data_elements_sets_pdss <- read.csv(paste0(pdss_data_dir, '/data_elements_sets.csv'))
 
-data_elements_bcg <- look_up_data_element_term('bcg')
-data_sets_bcg <- look_up_data_set_term('bcg')
+data_elements_bcg <- look_up_data_element_term('DTC-HepB-Hib')
+data_sets_bcg <- look_up_data_set_term('DTC-HepB-Hib')
 org_units_bcg <- get_de_reporting_facilities(data_sets_bcg)
 
 data_pdss_full <- read.csv('data/raw/pdss_data.csv')
-data_snis_full <- read.csv('data/raw/bcg_data.csv')
+data_snis_full <- read.csv('data/raw/snis_penta_data.csv')
 fac_zones <- read.csv('data/references/snis_fosas_zones.csv')
 fac_zones_pdss <- read.csv('data/references/pdss_fosas_zones.csv')
 
@@ -70,8 +74,6 @@ fosa_by_zone <- group_by(org_units_bcg, zone)
 n_expected <- summarise(fosa_by_zone, n_expected = length(unique(as.character(units))))
 
 map_expectation <- right_join(coordinates , n_expected, by = 'zone')
-
-summary(n_expected$n_expected)
 
 ggplot(map_expectation)+
   geom_polygon(aes(x  = long, y = lat , 
@@ -115,8 +117,8 @@ ggplot(map_reporting_rates)+
 First, let's look at the reported stockouts.
 
 ```{r , warning=FALSE}
-data_rupture <- data[(data$name == 'B 6.1 BCG diluants - jours de rupture de stock' | 
-                        data$name == 'F 4.1 BCG diluants - Jours de rupture de stock') & 
+data_rupture <- data[(data$name == 'B 6.1 DTC-HepB-Hib doses - jours de rupture de stock' | 
+                        data$name == 'F 4.1 DTC-HepB-Hib doses - Jours de rupture de stock') & 
                             data$value < 32 ,]
 
 stockout_by_zone <- group_by(data_rupture , zone)
@@ -132,6 +134,58 @@ ggplot(map_reported_stockout)+
   scale_fill_distiller(name = "Mean reported stockout days",
                        palette = "Spectral" , direction = -1)+ 
   theme(legend.position = "bottom")
+```
+
+Trying to look at both reporting and ruptures at the same time.
+
+```{r}
+# Based on https://cran.r-project.org/web/packages/pals/vignettes/bivariate_choropleths.html
+
+cols <- census.blueyellow ; nbins <- 3
+
+map_bivariate <- merge(map_reported_stockout, map_reporting_rates, by=c('long','lat','order','hole','piece','zone','group'))
+
+color_rupture <- findCols(classIntervals(map_bivariate$mean_rupture, n=nbins, style='fixed',
+                                           fixedBreaks=c(0,5, 15,31)))
+color_reporting <- findCols(classIntervals(map_bivariate$reporting_rate, n=nbins, style='fixed',
+                                           fixedBreaks=c(0,.5,.80,1.1)))
+
+map_bivariate$color_class <- color_reporting + nbins*(color_rupture-1)
+
+plot(mean_rupture ~ reporting_rate, data=map_bivariate,
+     col=cols()[map_bivariate$color_class])
+
+#map_bivariate <- map_bivariate[order(map_bivariate$zone),]
+
+#Cmap <- map(list(x = map_bivariate$long, y = map_bivariate$lat, names = map_bivariate$group), plot = FALSE, fill = FALSE)#,
+#                        projection = "tetra")
+colnames(shapefile_data@data) <- 'name'
+Cmap <- shapefile_data
+
+m3 <- mapplot(zone ~ color_class, data = map_bivariate,
+              colramp=cols, breaks=seq(from=0.5, by=1, length=nbins*nbins+1),
+              xlab="",
+              colorkey=FALSE,
+              map = map(Cmap),
+              scales = list(draw = FALSE))
+suppressWarnings(print( m3 ))
+# add the color legend
+m3leg <- levelplot(matrix(1:(nbins*nbins), nrow=nbins), axes=FALSE, col.regions=cols(),
+                   xlab="completeness  -->", ylab="rupture  -->", cuts=8, colorkey=FALSE,
+                   scales=list(draw=0))
+vp <- viewport(x=.15, y=.25, width=.4, height=.4)
+pushViewport(vp)
+print(m3leg, newpage=FALSE)
+popViewport()
+
+#map_reported_stockout_2 <- merge(map_reported_stockout, map_reporting_rates, by=c('long','lat','order','hole','piece','zone','group') , sort = FALSE)
+#qplot(x  = reporting_rate, y = mean_rupture, data=map_reported_stockout_2)+
+#  theme_minimal()+
+#  geom_smooth(method='loess')
+
+
+
+
 ```
 
 ## PDSS data
