@@ -178,12 +178,40 @@ pushViewport(vp)
 print(m3leg, newpage=FALSE)
 popViewport()
 
-#map_reported_stockout_2 <- merge(map_reported_stockout, map_reporting_rates, by=c('long','lat','order','hole','piece','zone','group') , sort = FALSE)
-#qplot(x  = reporting_rate, y = mean_rupture, data=map_reported_stockout_2)+
-#  theme_minimal()+
-#  geom_smooth(method='loess')
+map_reported_stockout_2 <- merge(map_reported_stockout, map_reporting_rates, by=c('long','lat','order','hole','piece','zone','group') , sort = FALSE)
+ggplot(map_reported_stockout_2)+
+  geom_polygon(aes(x  = long, y = lat , 
+                   group=zone, 
+                   fill = mean_rupture,
+                   alpha=reporting_rate)) +
+  theme_minimal() +
+  coord_map()+ 
+  scale_fill_gradient(name = "Mean reported stockout days",
+                      high = '#ef0404', low = '#6ddb3f',
+                       space = "Lab",
+                      na.value = "grey50", guide = "colourbar")#+ 
+
+#  theme(legend.position = "bottom")
 
 
+
+
+```
+
+## Heatmap
+
+```{r}
+library(zoo)
+data_rupture$month <- as.factor(as.yearmon(paste0(as.character(data_rupture$period), '15'), format="%Y%m%d"))
+data_test <- data_rupture[data_rupture$zone %in% unique(data_rupture$zone)[0:20],]
+d <- ggplot(data_test, aes(month, org_unit_ID, fill = value))
+d + geom_bin2d( ) + #+ scale_x_date(date_breaks = "1 month", date_labels = "%m")+ 
+  scale_fill_gradient(name = "Mean reported stockout days",
+                      high = '#ef0404', low = '#6ddb3f',
+                       space = "Lab",
+                      na.value = "grey50", guide = FALSE) +#+ +
+  theme( axis.text.y=element_blank(),
+         axis.ticks.y=element_blank()) + facet_wrap(~zone)
 
 
 ```
@@ -191,6 +219,7 @@ popViewport()
 ## PDSS data
 
 ```{r}
+
 pdss_bcg <- data_pdss[as.character(data_pdss$name) %in% c('13.5.1 BCG, Penta, la poliomyélite, la fièvre jaune, hépatite B, la rougeole, le tétanos', '13.5.1 BCG'), ]
 
 #'13.5.1 BCG',
