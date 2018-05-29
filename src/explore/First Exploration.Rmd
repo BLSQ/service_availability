@@ -31,24 +31,28 @@ setwd(work_dir)
 data_elements <- read.csv(paste0(snis_data_dir, '/data_elements_metadata.csv'))
 org_units_reports <- read.csv(paste0(snis_data_dir, '/org_units_report.csv'))
 data_elements_sets <- read.csv(paste0(snis_data_dir, '/data_elements_sets.csv'))
+snis_org_units <- read.csv(paste0(snis_data_dir, '/org_units_description.csv'))
 
 data_elements_pdss <- read.csv(paste0(pdss_data_dir, '/data_elements_metadata.csv'))
 org_units_reports_pdss <- read.csv(paste0(pdss_data_dir, '/org_units_report.csv'))
 data_elements_sets_pdss <- read.csv(paste0(pdss_data_dir, '/data_elements_sets.csv'))
 
-data_elements_bcg <- look_up_data_element_term('DTC-HepB-Hib')
-data_sets_bcg <- look_up_data_set_term('DTC-HepB-Hib')
+data_elements_bcg <- look_up_data_element_term('Artesunate-Amodiaquine')
+data_sets_bcg <- look_up_data_set_term('Artesunate-Amodiaquine')
 org_units_bcg <- get_de_reporting_facilities(data_sets_bcg)
 
 data_pdss_full <- read.csv('data/raw/pdss_data.csv')
-data_snis_full <- read.csv('data/raw/snis_penta_data.csv')
+data_snis_full <- read.csv('data/raw/snis_malar_data.csv')
 fac_zones <- read.csv('data/references/snis_fosas_zones.csv')
 fac_zones_pdss <- read.csv('data/references/pdss_fosas_zones.csv')
 
 matched_zones <- read.csv('data/references/matched_zones.csv')
 
+year = '2017'
+start <- paste0(year, '01')
+end <- paste0(year, '12')
 
-data <- data_snis_full[data_snis_full$period > "201612", ]
+data <- data_snis_full[data_snis_full$period >= start & data_snis_full$period <= end, ]
 data <- merge(data, fac_zones, by.x = 'org_unit_ID', by.y = 'units')
 
 data_pdss <- data_pdss_full[as.character(data_pdss_full$period) > "2016Q4", ]
@@ -97,6 +101,8 @@ n_reporting_zone <- summarise(n_reporting_zone, n_reporting = sum(n_reporting_mo
 
 n_reporting <- inner_join(n_reporting_zone , n_expected)
 n_reporting$reporting_rate <- n_reporting$n_reporting / (12 * n_reporting$n_expected)
+n_reporting <- n_reporting[n_reporting$reporting_rate <= 1 , ]
+
 
 map_reporting_rates <- right_join(coordinates , n_reporting, by = 'zone')
 ggplot(map_reporting_rates)+
@@ -200,21 +206,96 @@ ggplot(map_reported_stockout_2)+
 
 ## Heatmap
 
-```{r}
+```{r, fig.height=500, fig.width = 50 , limitsize = FALSE}
 library(zoo)
-data_rupture$month <- as.factor(as.yearmon(paste0(as.character(data_rupture$period), '15'), format="%Y%m%d"))
-data_test <- data_rupture[data_rupture$zone %in% unique(data_rupture$zone)[0:20],]
+
+org_u <- snis_org_units[,!(names(snis_org_units) %in% c('date_opening', 'coordinates'))]
+colnames(org_u) <- c('zone', 'zone_name', 'region')
+data_rupture2 <- merge(data_rupture, org_u, by = 'zone')
+
+data_rupture2$month <- as.factor(as.yearmon(paste0(as.character(data_rupture2$period), '15'), format="%Y%m%d"))
+data_test <- data_rupture2[data_rupture2$zone %in% unique(data_rupture$zone),]
+
+unique_fosa <- unique(data_test[,c('zone', "org_unit_ID" )])
+ord_fosa <- unique_fosa$org_unit_ID[order(unique_fosa$zone)]
+data_test$org_unit_ID = factor(data_test$org_unit_ID, ord_fosa)
+
+unique_zone <- unique(data_test[,c('zone', "region" )])
+ord_reg <- unique_zone$zone[order(unique_zone$region)]
+data_test$zone = factor(data_test$zone, ord_reg)
+
 d <- ggplot(data_test, aes(month, org_unit_ID, fill = value))
-d + geom_bin2d( ) + #+ scale_x_date(date_breaks = "1 month", date_labels = "%m")+ 
+d + geom_bin2d( ) + 
+  scale_fill_gradient(#name = "Mean reported stockout days",
+                      high = '#ef0404', low = '#6ddb3f',
+                       space = "Lab",
+                      na.value = "grey50", guide = FALSE) +
+  facet_grid(region + zone ~ ., space = "free" , scales = 'free')+
+  theme( axis.text.y=element_blank(),
+         axis.ticks.y=element_blank())
+
+
+
+#+ scale_x_date(date_breaks = "1 month", date_labels = "%m")+ 
+  
+  
+ggsave('test.pdf', device = 'pdf', limitsize = FALSE)
+
+```
+
+```{r}
+rupture_indic <- unique(data$name)[grep( 'rupture', unique(data$name))]
+
+for(indic_name in rupture_indic){
+  data_rupture <- data[data$name == indic_name & 
+                            data$value < 32 ,]
+  stockout_by_zone <- group_by(data_rupture , zone)
+  mean_reported_stockout <- summarize(stockout_by_zone, mean_rupture = mean(value))
+  map_reported_stockout <- right_join(coordinates , mean_reported_stockout, by = 'zone')
+  map_reported_stockout_2 <- merge(map_reported_stockout, map_reporting_rates,
+                                   by=c('long','lat','order','hole','piece','zone','group') , sort = FALSE)
+  
+  title <- gsub(' - jours rupture de stock', '', indic_name)
+a <- ggplot(map_reported_stockout_2)+
+  geom_polygon(aes(x  = long, y = lat , 
+                   group=zone, 
+                   fill = mean_rupture,
+                   alpha=reporting_rate)) +
+  theme_minimal() + ggtitle(title) +
+  coord_map()+ 
   scale_fill_gradient(name = "Mean reported stockout days",
                       high = '#ef0404', low = '#6ddb3f',
                        space = "Lab",
-                      na.value = "grey50", guide = FALSE) +#+ +
-  theme( axis.text.y=element_blank(),
-         axis.ticks.y=element_blank()) + facet_wrap(~zone)
+                      na.value = "grey50", guide = "colourbar")
 
+  print(a)
+
+  
+}
 
 ```
+
+```{r}
+ff <- merge(org_u, mean_reported_stockout, by.x = 'zone' , by.y = 'zone')
+
+library(plyr)
+gg <- ddply(ff, .(region) , function(x) mean(x$mean_rupture))
+
+ggplot(ff , aes(mean_rupture)) +
+  geom_density() +
+  facet_wrap(~region)
+
+
+
+
+
+hist(gg$V1)
+```
+
+1. add region
+2. dist of rupture by region
+3. funnel plot
+
 
 ## PDSS data
 
